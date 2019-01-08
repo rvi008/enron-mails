@@ -1,3 +1,4 @@
+#!/usr/bin/env python # -*- coding: UTF-8 -*-
 """
 Compose a Data Summarization Script
 You have to write this script in Python.
@@ -23,6 +24,7 @@ Your solution will be assessed based on:
 	•	adherence to common coding practices that best enable sharing, re-using, and extending the code.
 
 """
+
 import pandas as pd
 import re
 from collections import Counter
@@ -34,6 +36,7 @@ NAMES = ['time', 'message identifier', 'sender', 'recipients', 'topic', 'mode']
 
 
 class Mail_corpus:
+	'''This class implements the solution to proposed case, it has methods to parse enron dataset, compute mail sent/received and plot them in a meaningful way''' 
 	def __init__(self, path):
 		self.path = path
 		self.inp = pd.read_csv(path, names=NAMES)
@@ -45,43 +48,45 @@ class Mail_corpus:
 		#Create a new dictionary containing both keys and 
 
 	def split_name_list(name_list, concat=True):
+		'''Util function to build columns based on a "|" separated string'''
 		name_list = map(lambda x:str(x).split('|'), name_list)
 		d = pd.DataFrame.from_records(name_list)
 
 		if concat: 
 			return pd.concat([d[col] for col in d]).dropna() #Return all the recipients names in one column
 		else: 
-			return d
+			return d #Return all the recipients name in distinct columns corresponding to the posistion in the "to" field
 
 	def clean_name(s):
+		'''Util function to perform cleaning on senders/receiver string field'''
 		s = re.sub('\.', string=re.sub(r'\s*[@\/].*|\s*at\s+\w+', string=s.lower(), repl=''), repl=' ')#Clean the strings 
 		s = re.sub('\W', string=s, repl=' ')
 		return s.strip()
 
 
 	def output_communications(self, file_name):
+		'''This method implements the solution to the first request, namely, output a count of mail sent/received by person'''
 		self.entries.columns = ['no of mail sents', 'no of mail received']
-		self.entries.to_csv(file_name)
-		print('File of email sents/received by person outputed to '+file_name)
+		self.entries.to_csv(file_name)#The dataset outputed is sorted by mail sent count decreasing (see __init__) 
+		print('File of email sent/received by person outputed to '+file_name)
 
 	def plot_mail_count_from_prolific_senders(self, file_name, no_persons=5):
-		prolifics = self.inp[self.inp['sender'].isin(self.entries.index[:no_persons].tolist())][['time','sender']]
-		prolifics['count'] = 1
+		'''This method does the mandatory transformations for plotting the count of mail sent by the most prolific users, then it calls the plotting function'''
+		prolifics = self.inp[self.inp['sender'].isin(self.entries.index[:no_persons].tolist())][['time','sender']] #Filter on most prolific users
+		prolifics['count'] = 1 #Add this field to perfom running sum on the count of mails sent
 		piv = pd.pivot_table(prolifics, values='count', index='time', columns='sender').sort_index(ascending=True)#We pivot the Dataframe in order to count mails by senders
 
 		for col in [c for c in piv.columns if c !='sender']:
 			piv[col] = piv[col].cumsum().fillna(method='ffill') #Forward filling as the time series are disrupted
 
 		time = piv.index
-		piv['date'] = pd.to_datetime(time, unit='ms')
-		piv.plot(x='date', y=[c for c in piv.columns if c !='date'])
-		plt.title('Mails sents over time for prolific users')
-		plt.legend(loc='best')
-		plt.savefig(file_name)
+		piv['date'] = pd.to_datetime(time, unit='ms') 
+		Mail_corpus.plot_line_chart(piv, file_name, 1)
 		print('PNG graph of emails sent over time for prolific users saved in: '+file_name)
 
 	def plot_mail_count_distinct_to_prolifics(self, file_name, no_persons=5):
-		r = Mail_corpus.split_name_list(self.inp['recipients'].values.tolist(), False)
+		'''This method does the mandatory transformations for plotting the count of unique senders contacting the most prolific users, then it calls the plotting function'''
+		r = Mail_corpus.split_name_list(self.inp['recipients'].values.tolist(), False) #Resplit recipient column but keep names in columns
 
 		for col in r.columns:
 			r[col] = r[col].map(lambda x: Mail_corpus.clean_name(str(x))) #Clean strings in each column
@@ -90,35 +95,52 @@ class Mail_corpus:
 		df_list = []
 
 		for p in self.entries.index[:no_persons].tolist():
-			temp = temp[temp[temp.columns[2:]].isin([p]).T.any()] #Only keep mail sent to most prolific users
-			temp['unique_count'], temp['recipient'], temp['time']  = Mail_corpus.rolling_unique(temp), p, temp.index
-			df_list.append(temp[['time', 'unique_count', 'recipient']])
+			t = temp[temp[temp.columns[2:]].isin([p]).T.any()].copy() #Only keep mail sent to most prolific users
+			t['unique_count'] = Mail_corpus.rolling_unique(t) #Count unique senders in a running count of uniques
+			t['recipient'] = p
+			df_list.append(t[['time', 'unique_count', 'recipient']].copy())
 
-		df = pd.concat(df_list, axis=1)
+		df = pd.concat(df_list, axis=0)
 		piv = pd.pivot_table(df, values='unique_count', index='time', columns='recipient').sort_index(ascending=True)
-		piv['date'] = pd.to_datetime(time, unit='ms')
-		piv.plot(x='date', y=[c for c in piv.columns if c !='date'])
-		plt.title('Unique user having sent mails over time to prolific users')
-		plt.legend(loc='best')
-		plt.savefig(file_name)
+		piv['date'] = pd.to_datetime(piv.index, unit='ms')
+
+		for col in [c for c in piv.columns if c !='date']:
+			piv[col] = piv[col].fillna(method='ffill') #Forward filling as the time series are disrupted
+
+
+		Mail_corpus.plot_line_chart(piv, file_name, 2)
 		print('PNG graph of unique senders over time to prolific users saved in: '+file_name)
 
 	def rolling_unique(df):
+		'''Util function to perfom running counts of values over time'''
 		distinct_users = set()
 		unique_count = []
 
 		for index, row in df.iterrows():
 			distinct_users.add(row['sender'])
-			unique_count.append(len(distinct_users))
+			unique_count.append(len(distinct_users)) #Keep the unique count by getting the length of senders set
 
 		return unique_count 
 
 
+	def plot_line_chart(piv, file_name, type_chart):
+		''' Util function to plot & save line chart in the provided file_name'''
+		piv.plot(x='date', y=[c for c in piv.columns if c !='date'])
+
+		if type_chart == 1:
+			plt.title('Mails sent over time for prolific users')
+		else:
+			plt.title('Unique users having sent mails over time to prolific users')
+
+		plt.legend(loc='best')
+		plt.savefig(file_name)
+
 
 if __name__ == '__main__':
 	m = Mail_corpus(sys.argv[1])
-	m.plot_mail_count_from_prolific_senders('test.png')
-	m.plot_mail_count_distinct_to_prolifics('test2.png')
+	m.output_communications("out.csv")
+	m.plot_mail_count_from_prolific_senders('sent_mails.png')
+	m.plot_mail_count_distinct_to_prolifics('unique_contacts.png')
 
 
 	
